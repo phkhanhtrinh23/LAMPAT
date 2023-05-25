@@ -6,14 +6,12 @@ This is an implementation of our research [LAMPAT: Low-rank Adaptation Multiling
 
 <img src="./image/architecture.png"/>
 
-
 ## Getting Started
 
 To get started, you should have prior knowledge on **Python** and **PyTorch** at first. A few resources to get you started if this is your first Python or PyTorch project:
 
 - [PyTorch Tutorials](https://pytorch.org/tutorials/)
 - [Python for Beginners](https://www.python.org/about/gettingstarted/)
-
 
 ## Installation
 
@@ -22,9 +20,8 @@ To get started, you should have prior knowledge on **Python** and **PyTorch** at
    ```sh
    git clone https://github.com/phkhanhtrinh23/LAMPAT.git
    ```
-  
-2. Use any code editor to open the folder **LAMPAT**.
 
+2. Use any code editor to open the folder **LAMPAT**.
 
 ## Run
 
@@ -34,6 +31,21 @@ To get started, you should have prior knowledge on **Python** and **PyTorch** at
 
 3. Read and run `train.sh` to train the **LAMPAT** model.
 
+## Evaluation
+
+### Evaluation dataset
+
+The evaluation dataset can be downloaded at [this link](https://hcmuteduvn-my.sharepoint.com/:f:/g/personal/khoi_le_pi2001_hcmut_edu_vn/EoMfM-T_NNJDmGlv8qBKS4oBINUMdaMF9mDncpNsmtNezw?e=uX4Ab6)
+
+### Run
+
+In the `evaluation` folder, there are 3 python files:
+
+- `mev_sup_multi_ref.py`: used to evaluate on STAPLE multi-reference evaluation dataset
+- `mev_sup.py`: used to evaluate on PAWS-X and Opusparcus
+- `mev_unsup.py`: used to evaluate on WMT19
+
+Each file will run the metrics and report the score to the console
 
 ## Contribution
 
@@ -44,7 +56,6 @@ Contributions are what make GitHub such an amazing place to be learn, inspire, a
 3. Commit your changes: `git commit -m 'add your messages'`
 4. Push to the branch: `git push origin contribute/Contribute`
 5. Open a pull request
-
 
 ## Contact
 
