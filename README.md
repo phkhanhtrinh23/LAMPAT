@@ -37,6 +37,8 @@ To get started, you should have prior knowledge on **Python** and **PyTorch** at
 
 The evaluation dataset can be downloaded at [this link](https://hcmuteduvn-my.sharepoint.com/:f:/g/personal/khoi_le_pi2001_hcmut_edu_vn/EoMfM-T_NNJDmGlv8qBKS4oBINUMdaMF9mDncpNsmtNezw?e=uX4Ab6)
 
+Download the zip file and unzip it to put into the `evaluation/eval_dataset`
+
 ### Run
 
 In the `evaluation` folder, there are 3 python files:
