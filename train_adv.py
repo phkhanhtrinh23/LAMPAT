@@ -242,12 +242,12 @@ if __name__ == '__main__':
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     
     # ========================= ADVERSARIAL CONFIGURATION =========================
-    parser.add_argument('--adv_lr', type=float, default=2.5e-5)
+    parser.add_argument('--adv_lr', type=float, default=2e-3)
     parser.add_argument('--adv_steps', type=int, default=2, help="should be at least 1")
     parser.add_argument('--adv_init_mag', type=float, default=1)
     parser.add_argument('--norm_type', type=str, default="l2")
-    parser.add_argument('--adv_max_norm', type=float, default=0, help="set to 0 to be unlimited")
-    parser.add_argument('--div_step_size', type=float, default=1)
+    parser.add_argument('--adv_max_norm', type=float, default=2e-5, help="set to 0 to be unlimited")
+    parser.add_argument('--div_step_size', type=float, default=10)
     # ===========================================================================
 
     parser.add_argument('--debug', type=bool, default=True)
