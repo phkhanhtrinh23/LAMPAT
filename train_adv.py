@@ -246,7 +246,7 @@ if __name__ == '__main__':
     parser.add_argument('--adv_steps', type=int, default=2, help="should be at least 1")
     parser.add_argument('--adv_init_mag', type=float, default=1)
     parser.add_argument('--norm_type', type=str, default="l2")
-    parser.add_argument('--adv_max_norm', type=float, default=2e-5, help="set to 0 to be unlimited")
+    parser.add_argument('--adv_max_norm', type=float, default=0, help="set to 0 to be unlimited")
     parser.add_argument('--div_step_size', type=float, default=10)
     # ===========================================================================
 
