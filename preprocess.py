@@ -128,7 +128,7 @@ def data_preparation(args):
                                                  lang_name,
                                                  args.shuffle_ratio)
                 write_line = corrupted_sentence + '\n' + sentence
-                encoded_line = gpt_tokenizer.encode(write_line)
+                encoded_line = gpt_tokenizer.encode(write_line, max_length=args.max_length, truncation=True)
                 if len(encoded_line) < args.max_length:
                     train_collection.append([corrupted_sentence, sentence])
                 else:
@@ -144,7 +144,7 @@ def data_preparation(args):
                                                  lang_name,
                                                  args.shuffle_ratio)
                 write_line = corrupted_sentence + '\n' + sentence
-                encoded_line = gpt_tokenizer.encode(write_line)
+                encoded_line = gpt_tokenizer.encode(write_line, max_length=args.max_length, truncation=True)
                 if len(encoded_line) < args.max_length:
                     valid_collection.append([corrupted_sentence, sentence])
                 else:
