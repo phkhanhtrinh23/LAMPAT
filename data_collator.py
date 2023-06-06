@@ -32,8 +32,8 @@ class DataCollatorCustom:
         return encodings
 
     def formatting(self, input_text, target_text):
-        input_tokens = self.tokenizer.encode(input_text)
-        target_tokens = self.tokenizer.encode(target_text)
+        input_tokens = self.tokenizer.encode(input_text, max_length=self.max_length, truncation=True)
+        target_tokens = self.tokenizer.encode(target_text, max_length=self.max_length, truncation=True)
 
         tokens = [self.tokenizer.bos_token_id] + input_tokens \
             + [self.tokenizer.sep_token_id] + target_tokens \
