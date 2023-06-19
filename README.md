@@ -24,12 +24,13 @@ To get started, you should have prior knowledge on **Python** and **PyTorch** at
 2. Use any code editor to open the folder **LAMPAT**.
 
 ## Run
+1. Create conda virtual environment: `conda create -n lampat python=3.8`, activate it: `conda activate lampat`, and install the required packages: `pip install -r requirements.txt`.
 
-1. Download [wmt19_v18](https://data.statmt.org/news-commentary/v18/)
+2. Download [wmt19_v18](https://data.statmt.org/news-commentary/v18/)
 
-2. Extract the files to `.txt` files, rename all of the files with their [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) code, and place them in the path `data/wmt19_v18`. For example: `data/wmt19_v18/en.txt`
+3. Extract the files to `.txt` files, rename all of the files with their [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) code, and place them in the path `data/wmt19_v18`. For example: `data/wmt19_v18/en.txt`
 
-3. Read and run `train.sh` to train the **LAMPAT** model.
+4. Read and run `train.sh` to train the **LAMPAT** model.
 
 ## Evaluation
 
