@@ -56,6 +56,9 @@ def main(args):
         eval_dataset, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True
         )
     
+    if os.path.exists(args.model_name_or_path) == False:
+        os.makedirs(args.model_name_or_path, exist_ok=True)
+    
     config = GPT2Config(
         n_embd=2048, n_layer=24, n_head=16, 
         lora_attn_dim=args.lora_dim, 
@@ -76,11 +79,9 @@ def main(args):
         num_training_steps=(len(train_dataloader) * args.num_epochs),
     )
 
-    logging.info("==========Configuration==========")
-
     model = model.to(device)
 
-    # training
+    # Training
     logging.info("==========Start training==========")
 
     comparative_loss = -1
