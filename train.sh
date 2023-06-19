@@ -2,7 +2,7 @@ DATA_PATH="data/wmt19_v18"
 TRAIN_PATH="./data/train_ready.txt"
 VALID_PATH="./data/valid_ready.txt"
 
-MODEL_NAME_OR_PATH="sberbank-ai/mGPT"
+MODEL_NAME_OR_PATH="ai-forever/mGPT"
 
 GPU_ID=0
 LENGTH=256

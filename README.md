@@ -27,7 +27,7 @@ To get started, you should have prior knowledge on **Python** and **PyTorch** at
 
 1. Download [wmt19_v18](https://data.statmt.org/news-commentary/v18/)
 
-2. Extract the files to `.txt` files, rename all of the files with their [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) code, and place them in the path `data/wmt19_v18`.
+2. Extract the files to `.txt` files, rename all of the files with their [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) code, and place them in the path `data/wmt19_v18`. For example: `data/wmt19_v18/en.txt`
 
 3. Read and run `train.sh` to train the **LAMPAT** model.
 

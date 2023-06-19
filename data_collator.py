@@ -36,7 +36,7 @@ class DataCollatorCustom:
         target_tokens = self.tokenizer.encode(target_text, max_length=self.max_length, truncation=True)
 
         tokens = [self.tokenizer.bos_token_id] + input_tokens \
-            + [self.tokenizer.sep_token_id] + target_tokens \
+            + [self.tokenizer.eos_token_id] + target_tokens \
             + [self.tokenizer.eos_token_id]
 
         labels = [-100] * (len(input_tokens) + 2) \

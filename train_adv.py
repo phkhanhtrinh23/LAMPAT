@@ -11,11 +11,17 @@ import datasets
 from tqdm import tqdm
 import torch.nn.functional as F
 
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import get_peft_model, LoraConfig, TaskType
+from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
 from data_collator import DataCollatorCustom
 from transformers import default_data_collator, get_linear_schedule_with_warmup
+from preprocess import data_preparation
+from model import GPT2Config, GPT2LMModel
+import loralib as lora
+
+# os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 start_datetime = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
@@ -23,10 +29,8 @@ def main(args):
     device = args.device
     batch_size = args.batch_size
 
-    # data preprocessing
+    # Data preprocessing
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    special_tokens_dict = {'sep_token': '[SEP]'}
-    tokenizer.add_special_tokens(special_tokens_dict)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
@@ -51,15 +55,20 @@ def main(args):
     eval_dataloader = DataLoader(
         eval_dataset, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True
         )
-
-    peft_config = LoraConfig(task_type=TaskType.CAUSAL_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
     
-    model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
-    
-    model.resize_token_embeddings(len(tokenizer))
-    model = get_peft_model(model, peft_config)
+    config = GPT2Config(
+        n_embd=2048, n_layer=24, n_head=16, 
+        lora_attn_dim=args.lora_dim, 
+        lora_attn_alpha=args.lora_alpha, 
+        lora_dropout=args.lora_dropout,
+    )
+    model = GPT2LMModel(config)
+    model.load_weight(torch.load(args.init_checkpoint))
 
-    # optimizer and lr scheduler
+    if args.lora_dim > 0:
+        lora.mark_only_lora_as_trainable(model)
+    
+    # Optimizer and LR-Scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
@@ -68,15 +77,11 @@ def main(args):
     )
 
     logging.info("==========Configuration==========")
-    logging.info(peft_config)
 
-    model.print_trainable_parameters()
     model = model.to(device)
 
     # training
     logging.info("==========Start training==========")
-
-    peft_model_id = f"{args.model_name_or_path}_{peft_config.peft_type}_{peft_config.task_type}"
 
     comparative_loss = -1
 
@@ -103,44 +108,74 @@ def main(args):
             else:
                 delta = torch.zeros_like(embeds_init)
             
-            outputs = model(**batch)
+            logits, loss = model(
+                input_ids=batch["input_ids"], 
+                lm_labels=inputs["labels"], 
+                lm_mask=inputs["attention_mask"], 
+                label_smooth=args.label_smooth
+            ) 
             
-            # K ascent steps
+            # The K ascent steps
             for astep in range(args.adv_steps):
-                # [1] forward pass
+                # [1] Forward propagation
                 delta.requires_grad_()
                 inputs['inputs_embeds'] = delta + embeds_init
-                
-                adv_outputs = model(**inputs)
-                adv_loss = adv_outputs.loss
-                mse_loss = F.mse_loss(adv_outputs.logits, outputs.logits.detach(), reduction="mean")
+
+                adv_logits, adv_loss = model(
+                    input_ids=batch["input_ids"], 
+                    input_embeds=inputs['inputs_embeds'], 
+                    lm_labels=inputs["labels"], 
+                    lm_mask=inputs["attention_mask"], 
+                    label_smooth=args.label_smooth
+                )
+                mse_loss = F.mse_loss(adv_logits, logits.detach(), reduction="mean")
                 adv_loss = adv_loss + args.div_step_size * mse_loss
-                adv_loss = adv_loss / args.adv_steps
+                adv_loss = adv_loss / args.adv_steps               
                 total_loss += adv_loss.detach().float()
                 
-                # [2] backward pass
+                # [2] Backward propagation
                 adv_loss.backward(retain_graph=True)
 
                 if astep == args.adv_steps - 1:
                     break
                 
-                # [3] get gradient on delta of divergence loss
-                delta_grad_2, = torch.autograd.grad(mse_loss, delta)
-                
-                # [4] get full gradients of delta
-                full_delta_grad = delta_grad_2
+                # [3] Get gradient on delta of divergence loss
+                delta_grad, = torch.autograd.grad(mse_loss, delta, create_graph=True)
 
-                # [5] update and clip
+                # [4] Calculate gradients
                 if args.norm_type == "l2":
-                    denorm = torch.norm(full_delta_grad.view(full_delta_grad.size(0), -1), dim=1).view(-1, 1, 1)
+                    denorm = torch.norm(delta_grad.view(delta_grad.size(0), -1), dim=1).view(-1, 1, 1)
                     denorm = torch.clamp(denorm, min=1e-8)
-                    delta = (delta + args.adv_lr * full_delta_grad / denorm).detach()
-                    if args.adv_max_norm > 0:
-                        delta_norm = torch.norm(delta.view(delta.size(0), -1).float(), p=2, dim=1).detach()
-                        exceed_mask = (delta_norm > args.adv_max_norm).to(embeds_init)
-                        reweights = (args.adv_max_norm / delta_norm * exceed_mask \
-                                     + (1 - exceed_mask)).view(-1, 1, 1)
-                        delta = (delta * reweights).detach()
+
+                    if epoch < args.num_epochs - 2:
+                        # Gradient Ascent Step
+                        delta = (delta + args.adv_lr * delta_grad / denorm).detach()
+                        
+                        # Projected Gradient Descent
+                        if args.adv_max_norm > 0:
+                            delta_norm = torch.norm(delta.view(delta.size(0), -1).float(), p=2, dim=1).detach()
+                            exceed_mask = (delta_norm > args.adv_max_norm).to(embeds_init)
+                            reweights = (args.adv_max_norm / delta_norm * exceed_mask \
+                                        + (1 - exceed_mask)).view(-1, 1, 1)
+                            delta = (delta * reweights).detach()
+
+                    else:
+                        # Newton-like step
+                        hessian_matrix, = torch.autograd.grad(delta_grad.sum(), delta)
+                        inverse_sqmatrix = torch.linalg.inv(torch.matmul(hessian_matrix, torch.transpose(hessian_matrix, 1, 2)))
+                        inverse_delta = torch.matmul(torch.transpose(hessian_matrix, 1, 2), inverse_sqmatrix)
+                        
+                        # Gradient Ascent Step
+                        delta = (delta + args.adv_lr * torch.transpose(inverse_delta, 1, 2) * delta_grad / denorm).detach()
+
+                        # Projected-Newton Method
+                        if args.adv_max_norm > 0:
+                            delta_norm = torch.norm(delta.view(delta.size(0), -1).float(), dim=1).detach()
+                            exceed_mask = (delta_norm > args.adv_max_norm).to(embeds_init)
+                            diff = (args.adv_max_norm / delta_norm * exceed_mask \
+                                        + (1 - exceed_mask)).view(-1, 1, 1)
+                            reweights = diff * hessian_matrix * diff
+                            delta = (delta * reweights).detach()
             
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             optimizer.step()
@@ -149,17 +184,44 @@ def main(args):
         
         print("train_loss:", total_loss, len(train_dataloader), total_loss / len(train_dataloader))
 
+        # Evaluation
         model.eval()
         eval_loss = 0
         eval_preds = []
         for batch in tqdm(eval_dataloader, position=1, desc="Validation", leave=False):
             batch = {k: v.to(device) for k, v in batch.items()}
+            
+            inputs = {"attention_mask": batch["attention_mask"], "labels": batch["labels"]}
+
+            embeds_init = model.transformer.wte(batch["input_ids"])
+            
+            if args.adv_init_mag > 0:
+                input_mask = inputs['attention_mask'].to(embeds_init)
+                input_lengths = torch.sum(input_mask, 1)
+
+                if args.norm_type == "l2":
+                    delta = torch.zeros_like(embeds_init).normal_(0, 1) * input_mask.unsqueeze(2)
+                    dims = input_lengths * embeds_init.size(-1)
+                    mag = args.adv_init_mag / torch.sqrt(dims)
+                    delta = (delta * mag.view(-1, 1, 1)).detach()
+            else:
+                delta = torch.zeros_like(embeds_init)
+            
+            inputs['inputs_embeds'] = delta + embeds_init
+
             with torch.no_grad():
-                outputs = model(**batch)
-            loss = outputs.loss
+                adv_logits, adv_loss = model(
+                    input_ids=batch["input_ids"], 
+                    input_embeds=inputs['inputs_embeds'], 
+                    lm_labels=inputs["labels"], 
+                    lm_mask=inputs["attention_mask"], 
+                    label_smooth=args.label_smooth
+                )
+
+            loss = adv_loss
             eval_loss += loss.detach().float()
             eval_preds.extend(
-                tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
+                tokenizer.batch_decode(torch.argmax(adv_logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
             )
         
         print("eval_loss:", eval_loss, len(eval_dataloader), eval_loss / len(eval_dataloader))
@@ -184,8 +246,10 @@ def main(args):
             
             # Saving model
             logging.info(f"Epoch {epoch+1}: Saving model and tokenizer...")
-            model.save_pretrained(os.path.join("new", peft_model_id))
-            tokenizer.save_pretrained(os.path.join("new", peft_model_id))
+            
+            torch.save(lora.lora_state_dict(model), args.model_name_or_path)
+            tokenizer.save_pretrained(args.model_name_or_path)
+            
             logging.info(f"Epoch {epoch+1}: Done.")
         
         # Generate new train dataset after each epoch to diversify the training set
@@ -241,18 +305,26 @@ if __name__ == '__main__':
     
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     
+    parser.add_argument('--debug', type=bool, default=True)
+    parser.add_argument('--seed', type=int, default=2023)
+    parser.add_argument('--type', type=str, default="train")
+    
     # ========================= ADVERSARIAL CONFIGURATION =========================
-    parser.add_argument('--adv_lr', type=float, default=2e-3)
+    parser.add_argument('--adv_lr', type=float, default=2e-5)
     parser.add_argument('--adv_steps', type=int, default=2, help="should be at least 1")
     parser.add_argument('--adv_init_mag', type=float, default=1)
     parser.add_argument('--norm_type', type=str, default="l2")
     parser.add_argument('--adv_max_norm', type=float, default=0, help="set to 0 to be unlimited")
-    parser.add_argument('--div_step_size', type=float, default=10)
+    parser.add_argument('--div_step_size', type=float, default=1)
     # ===========================================================================
 
-    parser.add_argument('--debug', type=bool, default=True)
-    parser.add_argument('--seed', type=int, default=2023)
-    parser.add_argument('--type', type=str, default="train")
+    # ========================= LoRA CONFIGURATION ==============================
+    parser.add_argument('--lora_dim', type=int, default=8, help='lora attn dimension')
+    parser.add_argument('--lora_alpha', type=int, default=128, help='lora attn alpha')
+    parser.add_argument('--lora_dropout', default=0.1, type=float, help='dropout probability for lora layers')
+    parser.add_argument('--label_smooth', default=0.1, type=float, help='label smoothing')
+    parser.add_argument('--init_checkpoint', default="pretrained_checkpoints/pytorch_model.bin", help='pretrained checkpoint path')
+    # ===========================================================================
 
     args = parser.parse_args()
 
