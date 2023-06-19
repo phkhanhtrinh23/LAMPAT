@@ -119,11 +119,11 @@ def main(args):
             for astep in range(args.adv_steps):
                 # [1] Forward propagation
                 delta.requires_grad_()
-                inputs['inputs_embeds'] = delta + embeds_init
+                inputs['input_embeds'] = delta + embeds_init
 
                 adv_logits, adv_loss = model(
                     input_ids=batch["input_ids"], 
-                    input_embeds=inputs['inputs_embeds'], 
+                    input_embeds=inputs['input_embeds'], 
                     lm_labels=inputs["labels"], 
                     lm_mask=inputs["attention_mask"], 
                     label_smooth=args.label_smooth
@@ -207,12 +207,12 @@ def main(args):
             else:
                 delta = torch.zeros_like(embeds_init)
             
-            inputs['inputs_embeds'] = delta + embeds_init
+            inputs['input_embeds'] = delta + embeds_init
 
             with torch.no_grad():
                 adv_logits, adv_loss = model(
                     input_ids=batch["input_ids"], 
-                    input_embeds=inputs['inputs_embeds'], 
+                    input_embeds=inputs['input_embeds'], 
                     lm_labels=inputs["labels"], 
                     lm_mask=inputs["attention_mask"], 
                     label_smooth=args.label_smooth
