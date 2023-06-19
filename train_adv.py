@@ -130,7 +130,7 @@ def main(args):
                     label_smooth=args.label_smooth
                 )
                 mse_loss = F.mse_loss(adv_logits, logits.detach(), reduction="mean")
-                adv_loss = adv_loss + args.div_step_size * mse_loss
+                adv_loss = adv_loss + args.adv_smooth * mse_loss
                 adv_loss = adv_loss / args.adv_steps               
                 total_loss += adv_loss.detach().float()
                 
@@ -248,7 +248,8 @@ def main(args):
             # Saving model
             logging.info(f"Epoch {epoch+1}: Saving model and tokenizer...")
             
-            torch.save(lora.lora_state_dict(model), args.model_name_or_path)
+            model_path = os.path.join(args.model_name_or_path, f'model_{epoch}.pt')
+            torch.save({"model_state_dict": lora.lora_state_dict(model)}, model_path)
             tokenizer.save_pretrained(args.model_name_or_path)
             
             logging.info(f"Epoch {epoch+1}: Done.")
@@ -315,8 +316,8 @@ if __name__ == '__main__':
     parser.add_argument('--adv_steps', type=int, default=2, help="should be at least 1")
     parser.add_argument('--adv_init_mag', type=float, default=1)
     parser.add_argument('--norm_type', type=str, default="l2")
-    parser.add_argument('--adv_max_norm', type=float, default=0, help="set to 0 to be unlimited")
-    parser.add_argument('--div_step_size', type=float, default=1)
+    parser.add_argument('--adv_max_norm', type=float, default=2e-5, help="set to 0 to be unlimited")
+    parser.add_argument('--adv_smooth', type=float, default=1)
     # ===========================================================================
 
     # ========================= LoRA CONFIGURATION ==============================
