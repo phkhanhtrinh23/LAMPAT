@@ -4,7 +4,7 @@
 
 This is an implementation of our research "LAMPAT: Low-rank Adaptation Multilingual Paraphrasing using Adversarial Training".
 
-<img src="./image/architecture.png"/>
+![Detail architecture of LAMPAT](image/detail.png)
 
 ## Getting Started
 
