@@ -3,3 +3,8 @@ PyYAML==6.0
 torch==1.13.0
 transformers==4.26.1
 loralib
+peft==0.6.0
+spacy==3.7.2
+stopwordsiso==0.6.1
+nltk==3.8.1
+datasets==2.14.6

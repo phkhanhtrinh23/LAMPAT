@@ -5,10 +5,10 @@ VALID_PATH="./data/valid_ready.txt"
 MODEL_NAME_OR_PATH="ai-forever/mGPT"
 
 GPU_ID=0
-LENGTH=256
+LENGTH=64
 BATCH_SIZE=1
 LR="4e-5"
-N_EPOCHS=20
+N_EPOCHS=3
 RANDOM_SEED=2023
 
 TRAIN_SIZE=50000
@@ -16,19 +16,19 @@ VALID_SIZE=10000
 SHUFFLE_RATIO=0.33
 
 # * ========== DO THIS ONE TIME ONLY ==========
-python preprocess.py \
-    --data_path ${DATA_PATH} \
-    --train_file ${TRAIN_PATH} \
-    --valid_file ${VALID_PATH} \
-    --model_name_or_path ${MODEL_NAME_OR_PATH} \
-    --max_length ${LENGTH} \
-    --seed ${RANDOM_SEED} \
-    --train_size ${TRAIN_SIZE} \
-    --valid_size ${VALID_SIZE} \
-    --shuffle_ratio ${SHUFFLE_RATIO}
+# python preprocess.py \
+#     --data_path ${DATA_PATH} \
+#     --train_file ${TRAIN_PATH} \
+#     --valid_file ${VALID_PATH} \
+#     --model_name_or_path ${MODEL_NAME_OR_PATH} \
+#     --max_length ${LENGTH} \
+#     --seed ${RANDOM_SEED} \
+#     --train_size ${TRAIN_SIZE} \
+#     --valid_size ${VALID_SIZE} \
+#     --shuffle_ratio ${SHUFFLE_RATIO}
 # * ==================================================
 TYPE="train"
-CUDA_VISIBLE_DEVICES=${GPU_ID} python train_adv.py \
+python train_adv.py \
     --train_data_path ${TRAIN_PATH}\
     --valid_data_path ${VALID_PATH} \
     --model_name_or_path ${MODEL_NAME_OR_PATH} \
@@ -39,4 +39,4 @@ CUDA_VISIBLE_DEVICES=${GPU_ID} python train_adv.py \
     --learning_rate ${LR} \
     --train_size ${TRAIN_SIZE} \
     --seed ${RANDOM_SEED} \
-    --type ${TYPE} \
+    --type ${TYPE}

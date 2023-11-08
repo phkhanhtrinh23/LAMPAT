@@ -4,6 +4,7 @@ import os
 import argparse
 import json
 from datetime import datetime
+import datetime as dt
 import random
 import logging
 import os
@@ -11,19 +12,30 @@ import datasets
 from tqdm import tqdm
 import torch.nn.functional as F
 
+from torch import nn
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
 from data_collator import DataCollatorCustom
 from transformers import default_data_collator, get_linear_schedule_with_warmup
 from preprocess import data_preparation
-from model import GPT2Config, GPT2LMModel
-import loralib as lora
+# from model import GPT2Config, GPT2LMModel
+# import loralib as lora
+from transformers import AutoModelForCausalLM, GPT2LMHeadModel
+from peft import get_peft_model, LoraConfig, TaskType
+import torch.distributed as dist
 
 # os.environ["TOKENIZERS_PARALLELISM"] = "false"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# os.environ["MASTER_ADDR"] = "localhost"
+# os.environ["MASTER_PORT"] = "29500"
+# os.environ['LOCAL_RANK'] = "0"
 
 start_datetime = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+
+# torch.cuda.set_device(device=0)
+# dist.init_process_group("nccl")
+# rank = dist.get_rank()
 
 def main(args):
     device = args.device
@@ -49,27 +61,51 @@ def main(args):
     eval_dataset = datasets.Dataset.from_dict(eval_dataset.load_dataset())
 
     train_dataloader = DataLoader(
-        train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True
+        train_dataset, 
+        shuffle=True, 
+        collate_fn=default_data_collator, 
+        batch_size=batch_size, 
+        pin_memory=True,
         )
 
     eval_dataloader = DataLoader(
-        eval_dataset, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True
+        eval_dataset, 
+        collate_fn=default_data_collator, 
+        batch_size=batch_size, 
+        pin_memory=True,
         )
     
-    if os.path.exists(args.model_name_or_path) == False:
-        os.makedirs(args.model_name_or_path, exist_ok=True)
+    if os.path.exists(args.checkpoint_path) == False:
+        os.makedirs(args.checkpoint_path, exist_ok=True)
     
-    config = GPT2Config(
-        n_embd=2048, n_layer=24, n_head=16, 
-        lora_attn_dim=args.lora_dim, 
-        lora_attn_alpha=args.lora_alpha, 
-        lora_dropout=args.lora_dropout,
-    )
-    model = GPT2LMModel(config)
-    model.load_weight(torch.load(args.init_checkpoint))
+    model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
 
-    if args.lora_dim > 0:
-        lora.mark_only_lora_as_trainable(model)
+    print("model summary:\n", model)
+
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        target_modules=["c_proj"],
+        fan_in_fan_out=True,
+        inference_mode=False, 
+        r=8, 
+        lora_alpha=32, 
+        lora_dropout=0.1,
+    )
+
+    model = get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
+
+    # config = GPT2Config(
+    #     n_embd=2048, n_layer=24, n_head=16, 
+    #     lora_attn_dim=args.lora_dim, 
+    #     lora_attn_alpha=args.lora_alpha, 
+    #     lora_dropout=args.lora_dropout,
+    # )
+    # model = GPT2LMModel(config)
+    # model.load_weight(torch.load(args.init_checkpoint))
+
+    # if args.lora_dim > 0:
+    #     lora.mark_only_lora_as_trainable(model)
     
     # Optimizer and LR-Scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
@@ -79,6 +115,8 @@ def main(args):
         num_training_steps=(len(train_dataloader) * args.num_epochs),
     )
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = nn.DataParallel(model)
     model = model.to(device)
 
     # Training
@@ -95,7 +133,7 @@ def main(args):
             
             inputs = {"attention_mask": batch["attention_mask"], "labels": batch["labels"]}
             
-            embeds_init = model.transformer.wte(batch["input_ids"])
+            embeds_init = model.module.transformer.wte(batch["input_ids"])
             
             if args.adv_init_mag > 0:
                 input_mask = inputs['attention_mask'].to(embeds_init)
@@ -109,33 +147,40 @@ def main(args):
             else:
                 delta = torch.zeros_like(embeds_init)
             
-            logits, loss = model(
-                input_ids=batch["input_ids"], 
-                lm_labels=inputs["labels"], 
-                lm_mask=inputs["attention_mask"], 
-                label_smooth=args.label_smooth
-            ) 
+            # logits, loss = model(
+            #     input_ids=batch["input_ids"], 
+            #     lm_labels=inputs["labels"], 
+            #     lm_mask=inputs["attention_mask"], 
+            #     label_smooth=args.label_smooth
+            # ) 
             
+            outputs = model(**batch)
+
             # The K ascent steps
             for astep in range(args.adv_steps):
                 # [1] Forward propagation
                 delta.requires_grad_()
-                inputs['input_embeds'] = delta + embeds_init
+                inputs['inputs_embeds'] = delta + embeds_init
 
-                adv_logits, adv_loss = model(
-                    input_ids=batch["input_ids"], 
-                    input_embeds=inputs['input_embeds'], 
-                    lm_labels=inputs["labels"], 
-                    lm_mask=inputs["attention_mask"], 
-                    label_smooth=args.label_smooth
-                )
-                mse_loss = F.mse_loss(adv_logits, logits.detach(), reduction="mean")
+                # adv_logits, adv_loss = model(
+                #     input_ids=batch["input_ids"], 
+                #     input_embeds=inputs['input_embeds'], 
+                #     lm_labels=inputs["labels"], 
+                #     lm_mask=inputs["attention_mask"], 
+                #     label_smooth=args.label_smooth
+                # )
+
+                adv_outputs = model(**inputs)
+                # mse_loss = F.mse_loss(adv_logits, logits.detach(), reduction="mean")
+                adv_loss = adv_outputs.loss
+
+                mse_loss = F.mse_loss(adv_outputs.logits, outputs.logits.detach(), reduction="mean")
                 adv_loss = adv_loss + args.adv_smooth * mse_loss
                 adv_loss = adv_loss / args.adv_steps               
                 total_loss += adv_loss.detach().float()
                 
                 # [2] Backward propagation
-                adv_loss.backward(retain_graph=True)
+                adv_loss.sum().backward(retain_graph=True)
 
                 if astep == args.adv_steps - 1:
                     break
@@ -189,12 +234,13 @@ def main(args):
         model.eval()
         eval_loss = 0
         eval_preds = []
+        f = open(f"output_at_{epoch}.txt", "w", encoding="utf-8")
         for batch in tqdm(eval_dataloader, position=1, desc="Validation", leave=False):
             batch = {k: v.to(device) for k, v in batch.items()}
             
             inputs = {"attention_mask": batch["attention_mask"], "labels": batch["labels"]}
 
-            embeds_init = model.transformer.wte(batch["input_ids"])
+            embeds_init = model.module.transformer.wte(batch["input_ids"])
             
             if args.adv_init_mag > 0:
                 input_mask = inputs['attention_mask'].to(embeds_init)
@@ -208,22 +254,33 @@ def main(args):
             else:
                 delta = torch.zeros_like(embeds_init)
             
-            inputs['input_embeds'] = delta + embeds_init
+            inputs['inputs_embeds'] = delta + embeds_init
 
             with torch.no_grad():
-                adv_logits, adv_loss = model(
-                    input_ids=batch["input_ids"], 
-                    input_embeds=inputs['input_embeds'], 
-                    lm_labels=inputs["labels"], 
-                    lm_mask=inputs["attention_mask"], 
-                    label_smooth=args.label_smooth
-                )
+                # adv_logits, adv_loss = model(
+                #     input_ids=batch["input_ids"], 
+                #     input_embeds=inputs['input_embeds'], 
+                #     lm_labels=inputs["labels"], 
+                #     lm_mask=inputs["attention_mask"], 
+                #     label_smooth=args.label_smooth
+                # )
+                outputs = model(**inputs)
 
-            loss = adv_loss
+            loss = outputs.loss
             eval_loss += loss.detach().float()
-            eval_preds.extend(
-                tokenizer.batch_decode(torch.argmax(adv_logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
-            )
+            # eval_preds.extend(
+            #     tokenizer.batch_decode(torch.argmax(adv_logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
+            # )
+#             eval_preds.extend(
+#                 tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
+#             )
+            results = tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
+            input_batch = tokenizer.batch_decode(batch["input_ids"].detach().cpu().numpy(), skip_special_tokens=True)
+            for res, inp in zip(results, input_batch):
+                f.write("Input:" + inp)
+                f.write("\n")
+                f.write("Result:" + res)
+                f.write("\n\n")
         
         print("eval_loss:", eval_loss, len(eval_dataloader), eval_loss / len(eval_dataloader))
         
@@ -248,9 +305,9 @@ def main(args):
             # Saving model
             logging.info(f"Epoch {epoch+1}: Saving model and tokenizer...")
             
-            model_path = os.path.join(args.model_name_or_path, f'model_{epoch}.pt')
-            torch.save({"model_state_dict": lora.lora_state_dict(model)}, model_path)
-            tokenizer.save_pretrained(args.model_name_or_path)
+            model_path = os.path.join(args.checkpoint_path, f'model_{epoch}.pt')
+            torch.save({"model_state_dict": model.state_dict()}, model_path)
+            tokenizer.save_pretrained(args.checkpoint_path)
             
             logging.info(f"Epoch {epoch+1}: Done.")
         
@@ -267,6 +324,7 @@ def main(args):
         #     batch_size=batch_size,
         #     pin_memory=True,
         #     )
+    # dist.destroy_process_group()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -298,6 +356,10 @@ if __name__ == '__main__':
                         help='Training batch size')
     parser.add_argument('--eval_batch_size', type=int, default=4,
                         help='Evaluation batch size')
+    parser.add_argument('--checkpoint_path', type=str, default="checkpoint/",
+                        help='checkpoint path to save model')
+    parser.add_argument('--local_rank', type=int, default=0,
+                        help='local rank')
 
     parser.add_argument('--learning_rate', type=float, default=2e-5,
                         help='Learning rate of fine-tuning')

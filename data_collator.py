@@ -17,10 +17,12 @@ class DataCollatorCustom:
         tokens_list, labels_list = [], []
         with open(filename, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
-            for corrupted, sentence in reader:
+            for i, (corrupted, sentence) in enumerate(reader):
                 tokens, labels = self.formatting(corrupted, sentence)
                 tokens_list.append(tokens)
                 labels_list.append(labels)
+                if i == 5:
+                    break
 
         sentences = [self.tokenizer.decode(tokens) for tokens in tokens_list]
         
