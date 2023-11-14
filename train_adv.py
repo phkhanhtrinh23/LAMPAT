@@ -25,7 +25,7 @@ from peft import get_peft_model, LoraConfig, TaskType
 import torch.distributed as dist
 
 # os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # os.environ["MASTER_ADDR"] = "localhost"
 # os.environ["MASTER_PORT"] = "29500"
@@ -79,6 +79,7 @@ def main(args):
         os.makedirs(args.checkpoint_path, exist_ok=True)
     
     model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
+    model.resize_token_embeddings(len(tokenizer))
 
     print("model summary:\n", model)
 
@@ -178,6 +179,8 @@ def main(args):
                 adv_loss = adv_loss + args.adv_smooth * mse_loss
                 adv_loss = adv_loss / args.adv_steps               
                 total_loss += adv_loss.detach().float()
+
+                print("current train loss:", total_loss)
                 
                 # [2] Backward propagation
                 adv_loss.sum().backward(retain_graph=True)
@@ -268,16 +271,23 @@ def main(args):
 
             loss = outputs.loss
             eval_loss += loss.detach().float()
+            print("current eval loss:", eval_loss)
             # eval_preds.extend(
             #     tokenizer.batch_decode(torch.argmax(adv_logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
             # )
-#             eval_preds.extend(
-#                 tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
-#             )
+            # eval_preds.extend(
+            #     tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
+            # )
             results = tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
             input_batch = tokenizer.batch_decode(batch["input_ids"].detach().cpu().numpy(), skip_special_tokens=True)
-            for res, inp in zip(results, input_batch):
+            label_batch = tokenizer.batch_decode(batch["labels"][batch["labels"] != -100].unsqueeze(0).detach().cpu().numpy(), skip_special_tokens=True)
+            # print(batch["input_ids"], input_batch)
+            # print(batch["labels"][batch["labels"] != -100].unsqueeze(0), label_batch)
+            # print()
+            for res, inp, lab in zip(results, input_batch, label_batch):
                 f.write("Input:" + inp)
+                f.write("\n")
+                f.write("Label:" + lab)
                 f.write("\n")
                 f.write("Result:" + res)
                 f.write("\n\n")

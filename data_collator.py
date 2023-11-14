@@ -21,7 +21,7 @@ class DataCollatorCustom:
                 tokens, labels = self.formatting(corrupted, sentence)
                 tokens_list.append(tokens)
                 labels_list.append(labels)
-                if i == 5:
+                if i == 1000:
                     break
 
         sentences = [self.tokenizer.decode(tokens) for tokens in tokens_list]
