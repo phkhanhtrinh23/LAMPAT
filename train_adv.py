@@ -117,24 +117,43 @@ def main(args):
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = nn.DataParallel(model)
+    args.n_gpu = torch.cuda.device_count()
+    print("Num of gpu(s):", args.n_gpu)
+    if args.n_gpu > 1:
+        model = nn.DataParallel(model)
     model = model.to(device)
+    model.zero_grad()
+
+    if args.max_steps > 0:
+        t_total = args.max_steps
+        args.num_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
+    else:
+        t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_epochs
 
     # Training
     logging.info("==========Start training==========")
+    logging.info(
+        "Total train batch size (w. parallel, distributed & accumulation) = %d",
+        batch_size * args.gradient_accumulation_steps,
+    )
+    logging.info("Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
+    logging.info("Total optimization steps = %d", t_total)
 
     comparative_loss = -1
 
+    global_steps, eval_steps, total_loss = 0, 0, 0
     for epoch in tqdm(range(args.num_epochs), position=0, desc="Epoch", leave=False):
-        model.train()
-        total_loss = 0
+        for step, batch in enumerate(tqdm(train_dataloader, position=1, desc="Training", leave=False)):
+            model.train()
 
-        for batch in tqdm(train_dataloader, position=1, desc="Training", leave=False):
             batch = {k: v.to(device) for k, v in batch.items()}
             
             inputs = {"attention_mask": batch["attention_mask"], "labels": batch["labels"]}
             
-            embeds_init = model.module.transformer.wte(batch["input_ids"])
+            if args.n_gpu > 1:
+                embeds_init = model.module.transformer.wte(batch["input_ids"])
+            else:
+                embeds_init = model.transformer.wte(batch["input_ids"])
             
             if args.adv_init_mag > 0:
                 input_mask = inputs['attention_mask'].to(embeds_init)
@@ -177,13 +196,23 @@ def main(args):
 
                 mse_loss = F.mse_loss(adv_outputs.logits, outputs.logits.detach(), reduction="mean")
                 adv_loss = adv_loss + args.adv_smooth * mse_loss
-                adv_loss = adv_loss / args.adv_steps               
-                total_loss += adv_loss.detach().float()
 
-                print("current train loss:", total_loss)
+                if args.n_gpu > 1:
+                    adv_loss = adv_loss.mean()  # mean() to average on multi-gpu parallel training
+                if args.gradient_accumulation_steps > 1:
+                    adv_loss = adv_loss / args.gradient_accumulation_steps
+
+                adv_loss = adv_loss / args.adv_steps
+                              
+                total_loss += adv_loss.item()
+
+                # print("current train loss:", total_loss)
                 
                 # [2] Backward propagation
-                adv_loss.sum().backward(retain_graph=True)
+                if args.n_gpu > 1:
+                    adv_loss.sum().backward(retain_graph=True)
+                else:
+                    adv_loss.backward(retain_graph=True)
 
                 if astep == args.adv_steps - 1:
                     break
@@ -226,24 +255,29 @@ def main(args):
                             reweights = diff * hessian_matrix * diff
                             delta = (delta * reweights).detach()
             
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+                global_steps += 1
         
-        print("train_loss:", total_loss, len(train_dataloader), total_loss / len(train_dataloader))
+        print("average train_loss:", total_loss, global_steps, total_loss / global_steps)
 
         # Evaluation
-        model.eval()
         eval_loss = 0
         eval_preds = []
         f = open(f"output_at_{epoch}.txt", "w", encoding="utf-8")
-        for batch in tqdm(eval_dataloader, position=1, desc="Validation", leave=False):
+        for step, batch in enumerate(tqdm(eval_dataloader, position=1, desc="Validation", leave=False)):
+            model.eval()
             batch = {k: v.to(device) for k, v in batch.items()}
             
             inputs = {"attention_mask": batch["attention_mask"], "labels": batch["labels"]}
 
-            embeds_init = model.module.transformer.wte(batch["input_ids"])
+            if args.n_gpu > 1:
+                embeds_init = model.module.transformer.wte(batch["input_ids"])
+            else:
+                embeds_init = model.transformer.wte(batch["input_ids"])
             
             if args.adv_init_mag > 0:
                 input_mask = inputs['attention_mask'].to(embeds_init)
@@ -268,10 +302,19 @@ def main(args):
                 #     label_smooth=args.label_smooth
                 # )
                 outputs = model(**inputs)
+                tmp_eval_loss = outputs.loss
+                if args.gradient_accumulation_steps > 1:
+                    tmp_eval_loss = tmp_eval_loss / args.gradient_accumulation_steps
 
-            loss = outputs.loss
-            eval_loss += loss.detach().float()
-            print("current eval loss:", eval_loss)
+                tmp_eval_loss = tmp_eval_loss / args.adv_steps
+
+                eval_loss += tmp_eval_loss.item()
+
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                eval_steps += 1
+
+            # print("current eval loss:", eval_loss)
+
             # eval_preds.extend(
             #     tokenizer.batch_decode(torch.argmax(adv_logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
             # )
@@ -292,18 +335,16 @@ def main(args):
                 f.write("Result:" + res)
                 f.write("\n\n")
         
-        print("eval_loss:", eval_loss, len(eval_dataloader), eval_loss / len(eval_dataloader))
+        print("average eval_loss:", eval_loss, eval_steps, eval_loss / eval_steps)
         
-        eval_epoch_loss = eval_loss / len(eval_dataloader)
-        eval_ppl = torch.exp(eval_epoch_loss)
+        eval_epoch_loss = eval_loss / eval_steps
+        # eval_ppl = torch.exp(eval_epoch_loss)
         train_epoch_loss = total_loss / len(train_dataloader)
-        train_ppl = torch.exp(train_epoch_loss)
+        # train_ppl = torch.exp(train_epoch_loss)
 
         logging.info(f"Epoch {epoch+1}: \
                     train_loss: {train_epoch_loss}, \
-                    train_ppl: {train_ppl}, \
-                    valid_loss: {eval_epoch_loss}, \
-                    valid_ppl: {eval_ppl}"
+                    valid_loss: {eval_epoch_loss}"
                 )
 
         cummulative_loss = eval_loss / len(eval_dataloader)
@@ -382,6 +423,19 @@ if __name__ == '__main__':
     parser.add_argument('--debug', type=bool, default=True)
     parser.add_argument('--seed', type=int, default=2023)
     parser.add_argument('--type', type=str, default="train")
+    
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=64,
+        help="Number of updates steps to accumulate before performing a backward/update pass.",
+    )
+    parser.add_argument(
+        "--max_steps",
+        default=-1,
+        type=int,
+        help="If > 0: set total number of training steps to perform. Override num_train_epochs.",
+    )
     
     # ========================= ADVERSARIAL CONFIGURATION =========================
     parser.add_argument('--adv_lr', type=float, default=2e-5)

@@ -83,12 +83,13 @@ def pre_shuffle(sentence, lang, shuffle_ratio=0.33):
     # shuffling
     if random.random() < shuffle_ratio:
         random.shuffle(words)
-
-    # token gathering
-    if lang in ["zh", "ja"]:
-        return "".join(words)
+        # token gathering
+        if lang in ["zh", "ja"]:
+            return "".join(words)
+        else:
+            return " ".join(words)
     else:
-        return " ".join(words)
+        return sentence
 
 def data_preparation(args):
     gpt_tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
@@ -169,7 +170,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_file', type=str, default="data/train_ready.txt")
     parser.add_argument('--valid_file', type=str, default="data/valid_ready.txt")
 
-    parser.add_argument('--model_name_or_path', type=str, default="sberbank-ai/mGPT")
+    parser.add_argument('--model_name_or_path', type=str, default="ai-forever/mGPT")
 
     parser.add_argument('--max_length', type=int, default=128)
     parser.add_argument('--seed', type=int, default=2023)
