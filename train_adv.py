@@ -141,7 +141,7 @@ def main(args):
 
     comparative_loss = -1
 
-    global_steps, eval_steps, total_loss = 0, 0, 0
+    global_steps, eval_steps, total_loss, eval_loss, logging_loss, eval_logging_loss = 0, 0, 0, 0, 0, 0
     for epoch in tqdm(range(args.num_epochs), position=0, desc="Epoch", leave=False):
         for step, batch in enumerate(tqdm(train_dataloader, position=1, desc="Training", leave=False)):
             model.train()
@@ -255,17 +255,20 @@ def main(args):
                             reweights = diff * hessian_matrix * diff
                             delta = (delta * reweights).detach()
             
-            if (step + 1) % args.gradient_accumulation_steps == 0:
+            if (step + 1) % args.gradient_accumulation_steps == 0 or\
+                global_steps > len(train_dataloader):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
-                optimizer.zero_grad()
+                # optimizer.zero_grad()
+                model.zero_grad()
                 global_steps += 1
         
-        print("average train_loss:", total_loss, global_steps, total_loss / global_steps)
+        train_epoch_loss = (total_loss - logging_loss) / len(train_dataloader)
+        print("\naverage train_loss:", train_epoch_loss)
+        logging_loss = total_loss
 
         # Evaluation
-        eval_loss = 0
         eval_preds = []
         f = open(f"output_at_{epoch}.txt", "w", encoding="utf-8")
         for step, batch in enumerate(tqdm(eval_dataloader, position=1, desc="Validation", leave=False)):
@@ -303,14 +306,15 @@ def main(args):
                 # )
                 outputs = model(**inputs)
                 tmp_eval_loss = outputs.loss
+                if args.n_gpu > 1:
+                    tmp_eval_loss = tmp_eval_loss.mean()
                 if args.gradient_accumulation_steps > 1:
                     tmp_eval_loss = tmp_eval_loss / args.gradient_accumulation_steps
 
-                tmp_eval_loss = tmp_eval_loss / args.adv_steps
-
                 eval_loss += tmp_eval_loss.item()
 
-            if (step + 1) % args.gradient_accumulation_steps == 0:
+            if (step + 1) % args.gradient_accumulation_steps == 0 or \
+                args.gradient_accumulation_steps > len(eval_dataloader):
                 eval_steps += 1
 
             # print("current eval loss:", eval_loss)
@@ -334,20 +338,21 @@ def main(args):
                 f.write("\n")
                 f.write("Result:" + res)
                 f.write("\n\n")
-        
-        print("average eval_loss:", eval_loss, eval_steps, eval_loss / eval_steps)
-        
-        eval_epoch_loss = eval_loss / eval_steps
+        f.close()
+
+        eval_epoch_loss = (eval_loss - eval_logging_loss) / len(eval_dataloader)
+        eval_logging_loss = eval_loss
         # eval_ppl = torch.exp(eval_epoch_loss)
-        train_epoch_loss = total_loss / len(train_dataloader)
         # train_ppl = torch.exp(train_epoch_loss)
 
         logging.info(f"Epoch {epoch+1}: \
                     train_loss: {train_epoch_loss}, \
                     valid_loss: {eval_epoch_loss}"
                 )
+        
+        print("\naverage eval_loss:", eval_epoch_loss)
 
-        cummulative_loss = eval_loss / len(eval_dataloader)
+        cummulative_loss = eval_epoch_loss
 
         if comparative_loss == -1 or cummulative_loss < comparative_loss:
             # Update comparative_loss for later comparison
@@ -376,6 +381,10 @@ def main(args):
         #     pin_memory=True,
         #     )
     # dist.destroy_process_group()
+    logging.info(f"Final Summary: \
+                    train_loss: {total_loss / global_steps}, \
+                    valid_loss: {eval_loss / eval_steps}"
+                )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
