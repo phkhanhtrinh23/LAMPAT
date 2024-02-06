@@ -2,7 +2,9 @@
 
 ## About The Project
 
-This is an implementation of our research "LAMPAT: Low-rank Adaptation Multilingual Paraphrasing using Adversarial Training".
+This is an implementation of **LAMPAT: Low-rank Adaptation Multilingual Paraphrasing using Adversarial Training**. 
+
+LAMPAT has been accepted at the 38th AAAI Conference on Artificial Intelligence (AAAI-24). Paper can be found at this [link](https://arxiv.org/abs/2401.04348).
 
 ![Detail architecture of LAMPAT](image/detail.png)
 
