@@ -1,5 +1,7 @@
 # LAMPAT: Low-rank Adaptation Multilingual Paraphrasing using Adversarial Training
 
+Official Repository comes from: [VinAI Research](https://github.com/VinAIResearch/LAMPAT).
+
 ## About The Project
 
 This is an implementation of **LAMPAT: Low-rank Adaptation Multilingual Paraphrasing using Adversarial Training**. 
